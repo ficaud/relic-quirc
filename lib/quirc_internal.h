@@ -108,6 +108,8 @@ struct quirc_flood_fill_vars {
 };
 
 struct quirc {
+	quirc_alloc_fn		alloc;
+	quirc_free_fn		free_fn;
 	uint8_t			*image;
 	quirc_pixel_t		*pixels;
 	int			w;

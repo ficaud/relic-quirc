@@ -23,6 +23,18 @@ const char *quirc_version(void)
 	return "1.0";
 }
 
+/* Default allocator: the libc heap. Overridden by quirc_set_allocator(). */
+static quirc_alloc_fn g_alloc = malloc;
+static quirc_free_fn g_free = free;
+
+void quirc_set_allocator(quirc_alloc_fn alloc_fn, quirc_free_fn free_fn)
+{
+	if (alloc_fn != NULL && free_fn != NULL) {
+		g_alloc = alloc_fn;
+		g_free = free_fn;
+	}
+}
+
 struct quirc *quirc_new(void)
 {
 	struct quirc *q = malloc(sizeof(*q));
@@ -31,17 +43,22 @@ struct quirc *quirc_new(void)
 		return NULL;
 
 	memset(q, 0, sizeof(*q));
+	q->alloc = g_alloc;
+	q->free_fn = g_free;
 	return q;
 }
 
 void quirc_destroy(struct quirc *q)
 {
-	free(q->image);
+	if (q == NULL)
+		return;
+
+	q->free_fn(q->image);
 	/* q->pixels may alias q->image when their type representation is of the
 	   same size, so we need to be careful here to avoid a double free */
 	if (!QUIRC_PIXEL_ALIAS_IMAGE)
-		free(q->pixels);
-	free(q->flood_fill_vars);
+		q->free_fn(q->pixels);
+	q->free_fn(q->flood_fill_vars);
 	free(q);
 }
 
@@ -66,9 +83,10 @@ int quirc_resize(struct quirc *q, int w, int h)
 	 * alloc a new buffer for q->image. We avoid realloc(3) because we want
 	 * on failure to be leave `q` in a consistant, unmodified state.
 	 */
-	image = calloc(w, h);
+	image = q->alloc((size_t)w * (size_t)h);
 	if (!image)
 		goto fail;
+	memset(image, 0, (size_t)w * (size_t)h);
 
 	/* compute the "old" (i.e. currently allocated) and the "new"
 	   (i.e. requested) image dimensions */
@@ -81,13 +99,15 @@ int quirc_resize(struct quirc *q, int w, int h)
 	 * old buffer when the new size is greater and (b) to write beyond the
 	 * new buffer when the new size is smaller, hence the min computation.
 	 */
-	(void)memcpy(image, q->image, min);
+	if (min > 0)
+		(void)memcpy(image, q->image, min);
 
 	/* alloc a new buffer for q->pixels if needed */
 	if (!QUIRC_PIXEL_ALIAS_IMAGE) {
-		pixels = calloc(newdim, sizeof(quirc_pixel_t));
+		pixels = q->alloc(newdim * sizeof(quirc_pixel_t));
 		if (!pixels)
 			goto fail;
+		memset(pixels, 0, newdim * sizeof(quirc_pixel_t));
 	}
 
 	/*
@@ -113,29 +133,29 @@ int quirc_resize(struct quirc *q, int w, int h)
 	if (vars_byte_size / sizeof(*vars) != num_vars) {
 		goto fail; /* size_t overflow */
 	}
-	vars = malloc(vars_byte_size);
+	vars = q->alloc(vars_byte_size);
 	if (!vars)
 		goto fail;
 
 	/* alloc succeeded, update `q` with the new size and buffers */
 	q->w = w;
 	q->h = h;
-	free(q->image);
+	q->free_fn(q->image);
 	q->image = image;
 	if (!QUIRC_PIXEL_ALIAS_IMAGE) {
-		free(q->pixels);
+		q->free_fn(q->pixels);
 		q->pixels = pixels;
 	}
-	free(q->flood_fill_vars);
+	q->free_fn(q->flood_fill_vars);
 	q->flood_fill_vars = vars;
 	q->num_flood_fill_vars = num_vars;
 
 	return 0;
 	/* NOTREACHED */
 fail:
-	free(image);
-	free(pixels);
-	free(vars);
+	q->free_fn(image);
+	q->free_fn(pixels);
+	q->free_fn(vars);
 
 	return -1;
 }

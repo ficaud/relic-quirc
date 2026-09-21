@@ -17,6 +17,7 @@
 #ifndef QUIRC_H_
 #define QUIRC_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -24,6 +25,15 @@ extern "C" {
 #endif
 
 struct quirc;
+
+/* Memory allocator hooks. The embedding application may install a custom
+ * allocator (e.g. the ESP32 firmware routes the large image buffers to
+ * external PSRAM) before creating a recognizer. When quirc_set_allocator()
+ * is never called, quirc falls back to the libc malloc/free. */
+typedef void *(*quirc_alloc_fn)(size_t size);
+typedef void (*quirc_free_fn)(void *ptr);
+
+void quirc_set_allocator(quirc_alloc_fn alloc_fn, quirc_free_fn free_fn);
 
 /* Obtain the library version string. */
 const char *quirc_version(void);
